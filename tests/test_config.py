@@ -465,6 +465,170 @@ database:
             manager = ConfigurationManager()
             with self.assertRaises(ConfigurationError):
                 manager.load_config()
+    
+    def test_validate_config_openai(self):
+        """Test configuration validation for OpenAI provider."""
+        manager = ConfigurationManager()
+        
+        # Missing OpenAI API key
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(ConfigurationError) as ctx:
+                manager.validate_config("openai", "openai")
+            self.assertIn("OPENAI_API_KEY", str(ctx.exception))
+        
+        # Valid OpenAI configuration
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
+            # Should not raise with API key present
+            try:
+                manager.validate_config("openai", "openai")
+            except ConfigurationError as e:
+                # Only database config should be missing
+                self.assertIn("database", str(e).lower())
+    
+    def test_validate_config_azure(self):
+        """Test configuration validation for Azure provider."""
+        manager = ConfigurationManager()
+        
+        # Missing Azure configuration
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(ConfigurationError) as ctx:
+                manager.validate_config("azure", "azure")
+            self.assertIn("AZURE_OPENAI_API_KEY", str(ctx.exception))
+        
+        # Partial Azure configuration
+        with patch.dict(os.environ, {"AZURE_OPENAI_API_KEY": "test-key"}, clear=True):
+            with self.assertRaises(ConfigurationError) as ctx:
+                manager.validate_config("azure", "azure")
+            self.assertIn("AZURE_OPENAI_ENDPOINT", str(ctx.exception))
+        
+        # Valid Azure configuration
+        with patch.dict(os.environ, {
+            "AZURE_OPENAI_API_KEY": "test-key",
+            "AZURE_OPENAI_ENDPOINT": "https://test.azure.com"
+        }, clear=True):
+            try:
+                manager.validate_config("azure", "azure")
+            except ConfigurationError as e:
+                # Only database config should be missing
+                self.assertIn("database", str(e).lower())
+    
+    def test_validate_config_anthropic(self):
+        """Test configuration validation for Anthropic provider."""
+        manager = ConfigurationManager()
+        
+        # Missing Anthropic API key
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(ConfigurationError) as ctx:
+                manager.validate_config("anthropic", "huggingface")
+            self.assertIn("ANTHROPIC_API_KEY", str(ctx.exception))
+    
+    def test_validate_config_database(self):
+        """Test database configuration validation."""
+        manager = ConfigurationManager()
+        
+        # Test with YASRL_POSTGRES_URI
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "YASRL_POSTGRES_URI": "postgresql://user:pass@host/db"
+        }, clear=True):
+            # Should not raise
+            manager.validate_config("openai", "openai")
+        
+        # Test with individual parameters
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "POSTGRES_USER": "user",
+            "POSTGRES_PASSWORD": "pass",
+            "POSTGRES_HOST": "localhost",
+            "POSTGRES_DB": "testdb"
+        }, clear=True):
+            # Should not raise
+            manager.validate_config("openai", "openai")
+        
+        # Test with missing database config
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
+            with self.assertRaises(ConfigurationError) as ctx:
+                manager.validate_config("openai", "openai")
+            self.assertIn("database", str(ctx.exception).lower())
+    
+    def test_get_database_config_with_uri(self):
+        """Test getting database configuration with postgres_uri."""
+        manager = ConfigurationManager()
+        
+        # Test with YASRL_POSTGRES_URI environment variable
+        with patch.dict(os.environ, {
+            "YASRL_POSTGRES_URI": "postgresql://testuser:testpass@localhost:5432/testdb"
+        }, clear=True):
+            config = manager.get_database_config()
+            
+            self.assertEqual(config["user"], "testuser")
+            self.assertEqual(config["password"], "testpass")
+            self.assertEqual(config["host"], "localhost")
+            self.assertEqual(config["port"], "5432")
+            self.assertEqual(config["dbname"], "testdb")
+            self.assertEqual(config["postgres_uri"], "postgresql://testuser:testpass@localhost:5432/testdb")
+            self.assertIn("table_prefix", config)
+            self.assertIn("vector_dimensions", config)
+    
+    def test_get_database_config_with_individual_params(self):
+        """Test getting database configuration with individual parameters."""
+        manager = ConfigurationManager()
+        
+        with patch.dict(os.environ, {
+            "POSTGRES_USER": "testuser",
+            "POSTGRES_PASSWORD": "testpass",
+            "POSTGRES_HOST": "localhost",
+            "POSTGRES_PORT": "5433",
+            "POSTGRES_DB": "testdb"
+        }, clear=True):
+            config = manager.get_database_config()
+            
+            self.assertEqual(config["user"], "testuser")
+            self.assertEqual(config["password"], "testpass")
+            self.assertEqual(config["host"], "localhost")
+            self.assertEqual(config["port"], "5433")
+            self.assertEqual(config["dbname"], "testdb")
+            self.assertEqual(config["postgres_uri"], "postgresql://testuser:testpass@localhost:5433/testdb")
+    
+    def test_get_database_config_missing_params(self):
+        """Test that get_database_config raises error when configuration is incomplete."""
+        manager = ConfigurationManager()
+        
+        # Missing all parameters
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(ConfigurationError) as ctx:
+                manager.get_database_config()
+            self.assertIn("incomplete", str(ctx.exception).lower())
+        
+        # Missing some parameters
+        with patch.dict(os.environ, {
+            "POSTGRES_USER": "user",
+            "POSTGRES_HOST": "localhost"
+        }, clear=True):
+            with self.assertRaises(ConfigurationError) as ctx:
+                manager.get_database_config()
+            self.assertIn("incomplete", str(ctx.exception).lower())
+    
+    def test_get_database_config_with_config_file(self):
+        """Test getting database configuration from config file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "test_config.yaml"
+            config_file.write_text("""
+database:
+  postgres_uri: "postgresql://fileuser:filepass@filehost:5432/filedb"
+  table_prefix: "custom"
+  vector_dimensions: 768
+""")
+            
+            manager = ConfigurationManager(config_file=str(config_file))
+            config = manager.get_database_config()
+            
+            self.assertEqual(config["user"], "fileuser")
+            self.assertEqual(config["password"], "filepass")
+            self.assertEqual(config["host"], "filehost")
+            self.assertEqual(config["dbname"], "filedb")
+            self.assertEqual(config["table_prefix"], "custom")
+            self.assertEqual(config["vector_dimensions"], 768)
 
 
 if __name__ == "__main__":

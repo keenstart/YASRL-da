@@ -174,3 +174,27 @@ class VectorStoreManager:
             conn.rollback()
             logger.error(f"Failed to delete document: {e}")
             raise IndexingError(f"Failed to delete document: {e}") from e
+    
+    async def initialize(self):
+        """
+        Asynchronously initialize the vector store.
+        Currently wraps the synchronous setup_schema method.
+        """
+        # For now, we'll run the synchronous method
+        # In the future, this could use an async PostgreSQL driver
+        self.setup_schema()
+        logger.info("VectorStoreManager initialized asynchronously")
+    
+    async def close(self):
+        """
+        Asynchronously close database connections.
+        """
+        if self._connection:
+            self._connection.close()
+            self._connection = None
+            logger.info("Database connection closed")
+        if self._vector_store:
+            # If vector store has cleanup method
+            if hasattr(self._vector_store, 'close'):
+                await self._vector_store.close()
+            self._vector_store = None

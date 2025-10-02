@@ -420,3 +420,127 @@ class ConfigurationManager:
         
         sources.append("Default values")
         return sources
+    
+    def validate_config(self, llm_provider: str, embedding_provider: str) -> None:
+        """
+        Validate configuration for specified providers.
+        
+        Args:
+            llm_provider: Name of the LLM provider
+            embedding_provider: Name of the embedding provider
+            
+        Raises:
+            ConfigurationError: If required configuration is missing or invalid
+        """
+        config = self.load_config()
+        
+        # Validate LLM provider configuration
+        if llm_provider == "openai":
+            if not os.getenv("OPENAI_API_KEY"):
+                raise ConfigurationError(
+                    "OpenAI provider requires OPENAI_API_KEY environment variable. "
+                    "Please set it with: export OPENAI_API_KEY='your-api-key'"
+                )
+        elif llm_provider == "azure":
+            required_vars = ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"]
+            missing = [v for v in required_vars if not os.getenv(v)]
+            if missing:
+                raise ConfigurationError(
+                    f"Azure OpenAI provider requires environment variables: {', '.join(missing)}. "
+                    "Please set them in your environment."
+                )
+        elif llm_provider == "anthropic":
+            if not os.getenv("ANTHROPIC_API_KEY"):
+                raise ConfigurationError(
+                    "Anthropic provider requires ANTHROPIC_API_KEY environment variable. "
+                    "Please set it with: export ANTHROPIC_API_KEY='your-api-key'"
+                )
+        
+        # Validate embedding provider configuration
+        if embedding_provider == "openai":
+            if not os.getenv("OPENAI_API_KEY"):
+                raise ConfigurationError(
+                    "OpenAI embedding provider requires OPENAI_API_KEY environment variable. "
+                    "Please set it with: export OPENAI_API_KEY='your-api-key'"
+                )
+        elif embedding_provider == "azure":
+            required_vars = ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"]
+            missing = [v for v in required_vars if not os.getenv(v)]
+            if missing:
+                raise ConfigurationError(
+                    f"Azure embedding provider requires environment variables: {', '.join(missing)}. "
+                    "Please set them in your environment."
+                )
+        elif embedding_provider == "huggingface":
+            # HuggingFace doesn't always require API key for public models
+            pass
+        
+        # Validate database configuration
+        if not config.database.postgres_uri and not os.getenv("YASRL_POSTGRES_URI"):
+            # Check for individual database connection parameters
+            required_db_vars = ["POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_HOST", "POSTGRES_DB"]
+            missing = [v for v in required_db_vars if not os.getenv(v)]
+            if missing:
+                raise ConfigurationError(
+                    f"Database configuration requires either YASRL_POSTGRES_URI or individual parameters: {', '.join(missing)}. "
+                    "Please set them in your environment."
+                )
+    
+    def get_database_config(self) -> Dict[str, Any]:
+        """
+        Get database configuration as a dictionary.
+        
+        Returns:
+            Dictionary with database connection parameters
+            
+        Raises:
+            ConfigurationError: If database configuration is incomplete
+        """
+        config = self.load_config()
+        
+        # First try to use postgres_uri if available
+        if config.database.postgres_uri or os.getenv("YASRL_POSTGRES_URI"):
+            uri = config.database.postgres_uri or os.getenv("YASRL_POSTGRES_URI")
+            from urllib.parse import urlparse
+            parsed = urlparse(uri)
+            return {
+                "user": parsed.username,
+                "password": parsed.password,
+                "host": parsed.hostname,
+                "port": str(parsed.port or 5432),
+                "dbname": parsed.path.lstrip('/'),
+                "postgres_uri": uri,
+                "table_prefix": config.database.table_prefix,
+                "vector_dimensions": config.database.vector_dimensions,
+                "connection_pool_size": config.database.connection_pool_size,
+                "index_type": config.database.index_type
+            }
+        
+        # Fall back to individual parameters
+        user = os.getenv("POSTGRES_USER")
+        password = os.getenv("POSTGRES_PASSWORD")
+        host = os.getenv("POSTGRES_HOST")
+        port = os.getenv("POSTGRES_PORT", "5432")
+        dbname = os.getenv("POSTGRES_DB")
+        
+        if not all([user, password, host, dbname]):
+            raise ConfigurationError(
+                "Database configuration incomplete. Please provide either YASRL_POSTGRES_URI "
+                "or all of: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_HOST, POSTGRES_DB"
+            )
+        
+        # Construct postgres_uri from individual parameters
+        postgres_uri = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+        
+        return {
+            "user": user,
+            "password": password,
+            "host": host,
+            "port": port,
+            "dbname": dbname,
+            "postgres_uri": postgres_uri,
+            "table_prefix": config.database.table_prefix,
+            "vector_dimensions": config.database.vector_dimensions,
+            "connection_pool_size": config.database.connection_pool_size,
+            "index_type": config.database.index_type
+        }
